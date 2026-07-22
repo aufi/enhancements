@@ -37,11 +37,11 @@ OpenShift `BuildConfig` (`build.openshift.io/v1`) is a platform-specific CI/CD r
 
 2. **Shipwright strategy version pinning:** Should the plugin hardcode ClusterBuildStrategy names (`buildah`, `source-to-image`) or make them configurable via flags? The existing PoC hardcodes them, but cluster-specific ClusterBuildStrategy names may vary.
 
-3. **BuildRun generation:** Should the plugin also generate a BuildRun CR (the Shipwright equivalent of triggering a build), or leave that to the user? Recommendation: leave it on user, out of scope for this version.
+3. **BuildRun generation:** Should the plugin also generate a BuildRun CR (the Shipwright equivalent of triggering a build), or leave that to the user? Recommendation: generate a BuildRun CR referencing the Build and ServiceAccount.
 
 ## Summary
 
-Organizations migrating to newer versions of OpenShift to vanilla Kubernetesmight need to convert their `BuildConfig` resources to a portable, cloud-native alternative. Shipwright is a CNCF Sandbox project that provides a Kubernetes-native build framework and is the natural successor for OpenShift's build system.
+Organizations migrating to newer versions of OpenShift to vanilla Kubernetes might need to convert their `BuildConfig` resources to a portable, cloud-native alternative. Shipwright is a CNCF Sandbox project that provides a Kubernetes-native build framework and is the natural successor for OpenShift's build system.
 
 This enhancement adds a new crane transform plugin that performs offline, deterministic conversion of BuildConfig resources to Shipwright Build CRs. The plugin integrates into crane's multi-stage transformation pipeline, producing reviewable YAML artifacts with full whiteout and patch trail — no live cluster connectivity is required during transformation.
 
@@ -116,15 +116,15 @@ The existing PoC uses a direct API approach: it queries the live source cluster,
 
 #### Plugin System Prerequisite
 
-This plugin requires the crane plugin API extension that enables generating new resources (adding `NewResources []unstructured.Unstructured` to `PluginResponse`). This extension is 100% backward compatible via the `omitempty` JSON tag and is detailed in a [separate plan](https://github.com/aufi/move-crane/blob/main/drafts/plugin-update-new-resource-plan.md). Implementation touches:
+This plugin requires the crane plugin API extension that enables generating new resources (adding `NewResources []unstructured.Unstructured` to `PluginResponse`). This extension is backward compatible on the JSON wire format via the `omitempty` tag (existing plugins that omit `NewResources` continue to work unchanged). Note that adding the field to the Go struct will break any downstream code using unkeyed `PluginResponse{...}` literals — those must be updated to use keyed fields. Details in a [separate plan](https://github.com/aufi/move-crane/blob/main/drafts/plugin-update-new-resource-plan.md). Implementation touches:
 
 - **crane-lib:** `transform/plugin.go` (PluginResponse), `transform/runner.go` (RunnerResponse, Runner.Run)
-- **crane:** `Orchestrator` (artifact creation for new resources) and potentialy `Writer` (plugin dirs update).
+- **crane:** `Orchestrator` (artifact creation for new resources) and potentially `Writer` (plugin dirs update).
 
 
 #### Integration with Crane Workflow
 
-```
+```text
 crane export -n myapp
     ↓
     export/resources/
@@ -157,9 +157,10 @@ The plugin processes each resource in the stage input:
 
 1. **Filter:** Skip non-BuildConfig resources (return empty response)
 2. **Whiteout** the original BuildConfig (mark for deletion via `IsWhiteOut: true`)
-3. **Generate** a new Shipwright Build CR with mapped fields
+3. **Generate** a new Shipwright Build CR with mapped fields (unsupported strategies fail the conversion with a clear error and warning)
 4. **Optionally generate** a ServiceAccount if pull/push secrets are referenced
-5. Return the new resource(s) via `NewResources` in PluginResponse
+5. **Optionally generate** a BuildRun CR referencing the Build and the ServiceAccount (via `BuildRunSpec.serviceAccount`)
+6. Return the new resource(s) via `NewResources` in PluginResponse
 
 #### Field Mapping
 
@@ -177,7 +178,7 @@ The plugin processes each resource in the stage input:
 | BuildConfig Source | Shipwright Source | Notes |
 |-------------------|------------------|-------|
 | `git.uri` + `git.ref` | `source.type: Git`, `source.git.url` + `revision` | Direct mapping |
-| `git.httpProxy/httpsProxy` | Env vars `HTTP_PROXY`, `HTTPS_PROXY` | Injected as build env |
+| `git.httpProxy/httpsProxy` | _(not directly supported)_ | Shipwright's Git clone runs in a separate container; proxy must be configured via `GIT_CONTAINER_TEMPLATE` at the cluster level. Warning emitted. |
 | `sourceSecret` | `source.git.cloneSecret` | Direct mapping |
 | `contextDir` | `source.contextDir` | Direct mapping |
 | `binary` | `source.type: Local` | Requires manual `shp build upload` after apply |
@@ -277,7 +278,7 @@ spec:
 
 #### Plugin Repository Structure (draft)
 
-```
+```text
 crane-plugin-buildconfig-to-shipwright/
 ├── buildconfig/converter.go         # BuildConfig → Shipwright Build mapping
 ├── buildconfig/converter_test.go    # Unit tests for each strategy/source type
@@ -298,10 +299,10 @@ Plugin flags:
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | **Shipwright not installed on target cluster** | Build CRs fail on `kubectl apply` | Validate command should check it, document Shipwright installation in user guide |
-| **ImageStreamTag references can't be resolved offline** | Output image URL incomplete | Use exported ImageStream data; fallback to placeholder with `crane.konveyor.io/unresolved-ref` annotation |
+| **ImageStreamTag references can't be resolved offline** | Output image URL incomplete | Use exported ImageStream data; if resolution fails, fail the conversion with a clear error rather than emitting a placeholder registry URL that could be accidentally used |
 | **BuildConfig uses unsupported features** | Incomplete conversion | Emit warnings per unsupported field; annotate output CR with `crane.konveyor.io/warnings` listing each gap |
 | **Plugin API extension (prerequisite) delayed** | Blocks plugin development | Plugin can be developed against a local crane-lib branch in parallel |
-| **Registry credentials in Secrets** | Credentials copied to output directory | No change from current crane behavior — Secrets are already exported as-is; users must handle sensitive data per their policy |
+| **Registry credentials in Secrets** | Credentials copied to output directory | No change from current crane behavior — Secrets are already exported as-is. Users should exclude Secrets from Git commits (e.g., via `.gitignore` or external secret management) and avoid committing sensitive manifests to the transformation trail. Secret redaction in crane's export pipeline is a desirable future improvement but out of scope for this enhancement. |
 
 ## Design Details
 
