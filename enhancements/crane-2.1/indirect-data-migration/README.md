@@ -76,8 +76,7 @@ outbound HTTPS access to the cloud storage endpoint.
 - Compile rclone as a Go library into the `migtools/rsync-transfer` image
   with selective backend imports (S3 + local) to minimize image size growth
 - Support credential management via Kubernetes Secrets and local config files
-- Provide optional transfer-level compression (`--compress`) and client-side
-  encryption (`--encrypt`)
+- Provide optional client-side encryption (`--encrypt`)
 - Maintain 100% backward compatibility — no changes to existing behavior
   when `--cloud-storage` is not used
 
@@ -111,12 +110,18 @@ rsync/stunnel flow with two sequential rclone operations:
    destination PVC read-write and uses rclone to sync the contents from
    cloud storage into the PVC.
 
+Note: `transfer-pvc` does not quiesce source workloads — ensuring
+filesystem consistency (e.g. scaling down the application before
+transfer) is the responsibility of the orchestration layer that invokes
+`crane transfer-pvc`. This is consistent with the existing rsync-based
+direct transfer, which also assumes the caller has quiesced the source.
+
 Both mover Pods use the existing `quay.io/konveyor/rsync-transfer`
 image, which will now include rclone compiled in as a Go library. No
 stunnel is needed — rclone communicates with cloud storage over native
 HTTPS.
 
-```
+```text
 Source Cluster                    Cloud Storage              Destination Cluster
 ┌─────────────────┐              ┌──────────┐              ┌─────────────────┐
 │                 │              │          │              │                 │
@@ -184,7 +189,6 @@ New flags on `crane transfer-pvc`:
 | `--cloud-storage` | string | No | S3-compatible target (e.g. `s3:bucket/path`). Activates indirect mode |
 | `--rclone-config-secret` | string | Yes* | K8s Secret containing rclone.conf (must exist in both clusters) |
 | `--rclone-config-file` | string | Yes* | Path to rclone.conf on disk (crane creates temporary Secrets) |
-| `--compress` | bool | No | Enable transfer-level compression |
 | `--encrypt` | bool | No | Enable client-side encryption via rclone crypt overlay |
 
 \* One of `--rclone-config-secret` or `--rclone-config-file` is required
@@ -205,6 +209,7 @@ minimize image size growth, only the required backends are imported:
 import (
     _ "github.com/rclone/rclone/backend/s3"
     _ "github.com/rclone/rclone/backend/local"
+    _ "github.com/rclone/rclone/backend/crypt"    // optional: --encrypt
 )
 ```
 
@@ -218,8 +223,8 @@ A new rclone transfer engine is added alongside the existing rsync engine
 in `crane-lib/state_transfer/transfer/`. The engine:
 
 - Creates a mover Pod with PVC volume mount and rclone config Secret mount
-- Runs the rclone sync command inside the Pod
-- Streams Pod logs for progress reporting
+- Invokes rclone sync via the Go library API (librclone) inside the Pod
+- Reports progress programmatically via the library API
 - Removes the Pod on completion (garbage collection)
 
 #### Transfer Flow
@@ -229,13 +234,22 @@ in `crane-lib/state_transfer/transfer/`. The engine:
    - Image: `quay.io/konveyor/rsync-transfer:latest`
    - Mount source PVC as ReadOnly at `/mnt/pvc-data`
    - Mount rclone config Secret at `/etc/rclone/rclone.conf`
-   - Run: `rclone sync /mnt/pvc-data <cloud-storage-path>`
-   - Follow Pod logs, garbage collect on completion
+   - Sync via librclone API: `/mnt/pvc-data` → `<cloud-storage-path>`
+   - Report progress via library API, garbage collect on completion
 3. **Destination phase:** Create mover Pod in destination cluster
    - Mount destination PVC as ReadWrite at `/mnt/pvc-data`
    - Mount rclone config Secret
-   - Run: `rclone sync <cloud-storage-path> /mnt/pvc-data`
-   - Follow Pod logs, garbage collect on completion
+   - Sync via librclone API: `<cloud-storage-path>` → `/mnt/pvc-data`
+   - Report progress via library API, garbage collect on completion
+
+The transfer uses rclone's `sync` operation, which mirrors the source to
+the target. Files in the target that are absent from the source will be
+deleted — any existing data on the cloud storage path or the destination
+PVC will be overwritten.
+
+Filesystem metadata (mode bits, ownership, xattrs) is preserved using
+rclone's `--metadata` flag. Symlinks are handled via `--links` (stored
+as `.rclonelink` files during cloud transit and restored on download).
 
 #### Credential Management
 
@@ -246,7 +260,7 @@ mover Pod mounts the Secret at `/etc/rclone/rclone.conf`.
 ```bash
 # Create rclone.conf
 cat > rclone.conf <<EOF
-[myremote]
+[s3]
 type = s3
 provider = AWS
 access_key_id = AKIAIOSFODNN7EXAMPLE
@@ -268,11 +282,7 @@ kubectl create secret generic s3-credentials \
 creates temporary Secrets in both clusters, and removes them after transfer
 completion as part of garbage collection.
 
-#### Encryption and Compression (optional)
-
-**Compression (`--compress`):** Enables rclone transfer-level compression,
-reducing data volume during upload/download. Particularly effective for
-text-based files (logs, JSON, YAML) with 40-70% savings.
+#### Encryption (optional)
 
 **Encryption (`--encrypt`):** Uses rclone's crypt overlay to encrypt data
 before it leaves the cluster (client-side encryption). Technology: NaCl
@@ -281,8 +291,7 @@ generates a crypt configuration wrapping the user's remote, so the mover
 Pod transparently encrypts/decrypts during transfer. The encryption
 password is sourced from the rclone config Secret.
 
-Both features are opt-in. Without these flags, data transfers unencrypted
-and uncompressed.
+Encryption is opt-in. Without this flag, data transfers unencrypted.
 
 #### Comparison with Direct Transfer
 
@@ -293,7 +302,7 @@ and uncompressed.
 | TLS | Custom CA + mTLS (stunnel) | Native HTTPS (rclone) |
 | Pod count | 4 (rsync + stunnel, client + server) | 2 (rclone upload + download, sequential) |
 | Air-gapped clusters | Does not work | Works (S3 as intermediary) |
-| Transfer parallelism | Single-threaded (rsync) | Multi-threaded (rclone, 16 parallel transfers) |
+| Transfer parallelism | Single-threaded (rsync) | Multi-threaded (rclone, configurable) |
 | Additional cost | None | Cloud storage + egress fees |
 
 ### Security, Risks, and Mitigations
@@ -330,8 +339,7 @@ and uncompressed.
 
 - Flag validation: `--cloud-storage` requires rclone config, mutual
   exclusion of `--rclone-config-secret` and `--rclone-config-file`
-- rclone configuration generation: crypt overlay config for `--encrypt`,
-  compression parameters for `--compress`
+- rclone configuration generation: crypt overlay config for `--encrypt`
 - Mover Pod spec construction: correct volume mounts, image reference,
   command arguments
 
@@ -341,7 +349,7 @@ and uncompressed.
 - Create a PVC with test data (files of varying sizes and types)
 - Run indirect transfer via MinIO
 - Verify destination PVC contents match source
-- Test with `--compress` and `--encrypt` flags
+- Test with `--encrypt` flag
 - Test error cases: missing Secret, unreachable cloud storage, partial
   transfer recovery
 
@@ -363,7 +371,7 @@ compatible — it contains rsync and stunnel alongside rclone.
 **Downgrade:** Removing the `--cloud-storage` flag from CLI invocations
 reverts to direct transfer behavior. If the rsync-transfer image is
 downgraded to a version without rclone, any `--cloud-storage` usage will
-fail with a clear error (rclone binary not found in image).
+fail with a clear error (rclone library not available in image).
 
 ## Implementation History
 
