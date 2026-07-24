@@ -28,7 +28,7 @@ superseded-by: []
 
 1. ~~Should the `--cloud-storage` flag accept non-S3 rclone remotes (GCS, Azure) in the first iteration, or limit to S3-compatible only?~~ **Decision:** Start with S3-compatible only, additional backends can be added in subsequent iterations.
 2. ~~Should crane automatically clean up data from cloud storage after a successful transfer, or leave that to the user?~~ **Decision:** Clean up by default after successful transfer. A `--keep-cloud-data` flag allows users to skip the cleanup.
-3. Should `--bandwidth-limit` be included in the first release or deferred to a follow-up?
+3. ~~Should `--bandwidth-limit` be included in the first release or deferred to a follow-up?~~ **Decision:** No additional rclone flags will be added for the 0.11 release unless directly requested or found critical during testing. Detailed flag evaluation is tracked in migtools/crane#689.
 
 ## Summary
 
