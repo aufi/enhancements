@@ -37,7 +37,7 @@ OpenShift `BuildConfig` (`build.openshift.io/v1`) is a platform-specific CI/CD r
 
 2. **Shipwright strategy version pinning:** Should the plugin hardcode ClusterBuildStrategy names (`buildah`, `source-to-image`) or make them configurable via flags? The existing PoC hardcodes them, but cluster-specific ClusterBuildStrategy names may vary.
 
-3. **BuildRun generation:** Should the plugin also generate a BuildRun CR (the Shipwright equivalent of triggering a build), or leave that to the user? Recommendation: generate a BuildRun CR referencing the Build and ServiceAccount.
+3. **BuildRun generation:** Should the plugin also generate a BuildRun CR (the Shipwright equivalent of triggering a build), or leave that to the user? Decision: leave it to the user — creating a BuildRun triggers an actual build, which is dangerous at scale. Build lifecycle should be managed independently by the ops engineer or external CI/CD system.
 
 ## Summary
 
@@ -159,8 +159,7 @@ The plugin processes each resource in the stage input:
 2. **Whiteout** the original BuildConfig (mark for deletion via `IsWhiteOut: true`)
 3. **Generate** a new Shipwright Build CR with mapped fields (unsupported strategies fail the conversion with a clear error and warning)
 4. **Optionally generate** a ServiceAccount if pull/push secrets are referenced
-5. **Optionally generate** a BuildRun CR referencing the Build and the ServiceAccount (via `BuildRunSpec.serviceAccount`)
-6. Return the new resource(s) via `NewResources` in PluginResponse
+5. Return the new resource(s) via `NewResources` in PluginResponse
 
 #### Field Mapping
 
