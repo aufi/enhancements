@@ -26,8 +26,8 @@ superseded-by: []
 
 ## Open Questions
 
-1. Should the `--cloud-storage` flag accept non-S3 rclone remotes (GCS, Azure) in the first iteration, or limit to S3-compatible only?
-2. Should crane automatically clean up data from cloud storage after a successful transfer, or leave that to the user?
+1. ~~Should the `--cloud-storage` flag accept non-S3 rclone remotes (GCS, Azure) in the first iteration, or limit to S3-compatible only?~~ **Decision:** Start with S3-compatible only, additional backends can be added in subsequent iterations.
+2. ~~Should crane automatically clean up data from cloud storage after a successful transfer, or leave that to the user?~~ **Decision:** Clean up by default after successful transfer. A `--keep-cloud-data` flag allows users to skip the cleanup.
 3. Should `--bandwidth-limit` be included in the first release or deferred to a follow-up?
 
 ## Summary
@@ -91,8 +91,6 @@ outbound HTTPS access to the cloud storage endpoint.
   retention policies, versioning, or deduplication
 - Supporting all 70+ rclone backends — initial scope is S3-compatible storage
   only, with GCS and Azure as optional additions
-- Automatic cloud storage cleanup after transfer — the user manages the
-  lifecycle of data in cloud storage
 - Bandwidth limiting (`--bandwidth-limit`) — deferred to a follow-up
 
 ## Proposal
@@ -190,6 +188,7 @@ New flags on `crane transfer-pvc`:
 | `--rclone-config-secret` | string | Yes* | K8s Secret containing rclone.conf (must exist in both clusters) |
 | `--rclone-config-file` | string | Yes* | Path to rclone.conf on disk (crane creates temporary Secrets) |
 | `--encrypt` | bool | No | Enable client-side encryption via rclone crypt overlay |
+| `--keep-cloud-data` | bool | No | Skip cloud storage cleanup after successful transfer |
 
 \* One of `--rclone-config-secret` or `--rclone-config-file` is required
 when `--cloud-storage` is set.
