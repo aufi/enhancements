@@ -30,12 +30,12 @@ OpenShift `BuildConfig` (`build.openshift.io/v1`) is a platform-specific CI/CD r
 
 ## Open Questions
 
-1. **ImageStream resolution strategy:** When a BuildConfig references an ImageStreamTag for its base image or output, the plugin needs to resolve this to a concrete registry URL. Options:
-   - (a) Read from co-exported ImageStream YAML in the same export directory (preferred)
-   - (b) Accept a mapping file as plugin flag
-   - (c) Use a default OpenShift internal registry URL pattern as fallback
+1. **ImageStream resolution strategy:** When a BuildConfig references an ImageStreamTag for its base image or output, the plugin needs to resolve this to a concrete registry URL. Decision: use a layered fallthrough approach (1 → 2 → 3):
+   1. **Explicit mapping** — if user provides a `--registry-mapping` flag, use it (highest priority, critical for cross-cluster migrations)
+   2. **Co-exported ImageStream YAML** — read from sibling files in the export directory (requires `--export-dir` flag since plugins receive one resource at a time via stdin)
+   3. **Fallback** — construct internal OpenShift registry URL (`image-registry.openshift-image-registry.svc:5000/<ns>/<name>:<tag>`) with a warning (only useful when target is also OpenShift 4.x)
 
-2. **Shipwright strategy version pinning:** Should the plugin hardcode ClusterBuildStrategy names (`buildah`, `source-to-image`) or make them configurable via flags? The existing PoC hardcodes them, but cluster-specific ClusterBuildStrategy names may vary.
+2. **Shipwright strategy version pinning:** Decision: default to upstream ClusterBuildStrategy names (`buildah`, `source-to-image`) but allow overrides via optional flags (e.g., `--default-build-strategy`), since cluster admins may customize strategies and downstream operators may use different naming conventions.
 
 3. **BuildRun generation:** Should the plugin also generate a BuildRun CR (the Shipwright equivalent of triggering a build), or leave that to the user? Decision: leave it to the user — creating a BuildRun triggers an actual build, which is dangerous at scale. Build lifecycle should be managed independently by the ops engineer or external CI/CD system.
 
@@ -189,7 +189,7 @@ The plugin processes each resource in the stage input:
 | BuildConfig Output | Shipwright Output | Notes |
 |-------------------|------------------|-------|
 | `output.to` (DockerImage) | `output.image` | Direct reference |
-| `output.to` (ImageStreamTag) | `output.image` | Resolved to registry URL from exported ImageStream data |
+| `output.to` (ImageStreamTag) | `output.image` | Resolved via layered fallthrough: explicit `--registry-mapping`, co-exported ImageStream YAML, or internal registry fallback. |
 | `output.pushSecret` | `output.pushSecret` | Direct mapping |
 
 **Known unsupported fields** — the plugin emits clear warnings for each:
