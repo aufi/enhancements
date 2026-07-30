@@ -158,7 +158,7 @@ The plugin processes each resource in the stage input:
 1. **Filter:** Skip non-BuildConfig resources (return empty response)
 2. **Whiteout** the original BuildConfig (mark for deletion via `IsWhiteOut: true`)
 3. **Generate** a new Shipwright Build CR with mapped fields (unsupported strategies fail the conversion with a clear error and warning)
-4. **Optionally generate** a ServiceAccount if pull/push secrets are referenced
+4. **Optionally generate** a ServiceAccount if pull/push secrets are referenced (scaffolded for the user to wire into their own BuildRun definitions)
 5. Return the new resource(s) via `NewResources` in PluginResponse
 
 #### Field Mapping
@@ -169,8 +169,8 @@ The plugin processes each resource in the stage input:
 |---------------------|-------------------------------|-------|
 | `dockerStrategy` | `buildah` | Dockerfile path, build args, base image mapped as paramValues |
 | `sourceStrategy` (S2I) | `source-to-image` | Builder image mapped as paramValue, env vars copied directly |
-| `customStrategy` | _(no conversion)_ | Warning emitted, resource passed through |
-| `jenkinsPipelineStrategy` | _(out of scope)_ | Warning emitted, resource passed through |
+| `customStrategy` | _(no conversion)_ | Conversion fails with warning |
+| `jenkinsPipelineStrategy` | _(out of scope)_ | Conversion fails with warning |
 
 **Source mapping:**
 
@@ -298,7 +298,7 @@ Plugin flags:
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | **Shipwright not installed on target cluster** | Build CRs fail on `kubectl apply` | Validate command should check it, document Shipwright installation in user guide |
-| **ImageStreamTag references can't be resolved offline** | Output image URL incomplete | Use exported ImageStream data; if resolution fails, fail the conversion with a clear error rather than emitting a placeholder registry URL that could be accidentally used |
+| **ImageStreamTag references can't be resolved offline** | Output image URL incomplete | Use exported ImageStream data; if resolution fails through all layers (explicit mapping, co-exported ImageStream, internal registry fallback), fail the conversion with a clear error |
 | **BuildConfig uses unsupported features** | Incomplete conversion | Emit warnings per unsupported field; annotate output CR with `crane.konveyor.io/warnings` listing each gap |
 | **Plugin API extension (prerequisite) delayed** | Blocks plugin development | Plugin can be developed against a local crane-lib branch in parallel |
 | **Registry credentials in Secrets** | Credentials copied to output directory | No change from current crane behavior — Secrets are already exported as-is. Users should exclude Secrets from Git commits (e.g., via `.gitignore` or external secret management) and avoid committing sensitive manifests to the transformation trail. Secret redaction in crane's export pipeline is a desirable future improvement but out of scope for this enhancement. |
