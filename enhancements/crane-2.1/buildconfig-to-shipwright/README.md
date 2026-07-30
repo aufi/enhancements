@@ -7,7 +7,7 @@ reviewers:
 approvers:
   - TBD
 creation-date: 2026-07-21
-last-updated: 2026-07-21
+last-updated: 2026-07-30
 status: provisional
 see-also:
   - "/enhancements/crane-2.0/multi-stage-kustomize-transforms"
@@ -32,7 +32,7 @@ OpenShift `BuildConfig` (`build.openshift.io/v1`) is a platform-specific CI/CD r
 
 1. **ImageStream resolution strategy:** When a BuildConfig references an ImageStreamTag for its base image or output, the plugin needs to resolve this to a concrete registry URL. Decision: use a layered fallthrough approach (1 → 2 → 3):
    1. **Explicit mapping** — if user provides a `--registry-mapping` flag, use it (highest priority, critical for cross-cluster migrations)
-   2. **Co-exported ImageStream YAML** — read from sibling files in the export directory (requires `--export-dir` flag since plugins receive one resource at a time via stdin)
+   2. **Co-exported ImageStream data** — passed to the plugin as an optional flag value (e.g., `--imagestream-mapping`) by the caller who has access to the export directory; the plugin itself only uses stdin/stdout and passed flags
    3. **Fallback** — construct internal OpenShift registry URL (`image-registry.openshift-image-registry.svc:5000/<ns>/<name>:<tag>`) with a warning (only useful when target is also OpenShift 4.x)
 
 2. **Shipwright strategy version pinning:** Decision: default to upstream ClusterBuildStrategy names (`buildah`, `source-to-image`) but allow overrides via optional flags (e.g., `--default-build-strategy`), since cluster admins may customize strategies and downstream operators may use different naming conventions.
@@ -203,6 +203,7 @@ The plugin processes each resource in the stage input:
 | ForcePull | No equivalent |
 | Image squash (--squash) | No equivalent |
 | Multiple image sources | Shipwright supports single source only |
+| Resource limits (CPU/memory) | Shipwright supports resource overrides but mapping is not implemented in this version |
 
 #### Conversion Example
 
@@ -268,7 +269,7 @@ spec:
     - name: build-args
       values:
         - value: "GO_VERSION=1.21"
-    - name: runtime-stage-from
+    - name: from
       value: golang:1.21-alpine
   output:
     image: quay.io/example/myapp:latest
@@ -291,7 +292,7 @@ Plugin flags:
 - `--search-registries` — comma-separated search registries for image resolution
 - `--insecure-registries` — comma-separated insecure registries
 - `--block-registries` — comma-separated blocked registries
-- `--default-build-strategy` — override default ClusterBuildStrategy name
+- `--strategy-mapping` — override default ClusterBuildStrategy names (e.g., `docker=my-buildah,s2i=my-s2i`)
 
 ### Security, Risks, and Mitigations
 
