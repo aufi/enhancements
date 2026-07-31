@@ -17,14 +17,14 @@ Each enhancement lives in `enhancements/<domain>/<slug>/README.md` following the
 When asked to write an enhancement, follow this process:
 
 1. **Validate working directory** — confirm `enhancements/` and `guidelines/` directories exist. If not, stop and tell the user to run from their enhancements repo fork.
-2. **Get required input** — feature description and target domain (subdirectory under `enhancements/`). If domain is not provided, list existing ones with `ls enhancements/`.
+2. **Get required input** — feature description and target domain (subdirectory under `enhancements/`). If domain is not provided, list existing ones with `ls enhancements/`. If domain is provided, verify it exists as a subdirectory under `enhancements/`; if not, show the list of valid domains and ask the user to correct.
 3. **Derive metadata:**
    - **Slug:** kebab-case from the feature description (e.g., `multi-stage-kustomize-transforms`)
-   - **Author:** from `git config user.name` / `git config user.email`
+   - **Author:** from `git config user.name` / `git config user.email`; ask the user for their GitHub handle if needed
    - **Date:** today's date (`yyyy-mm-dd`)
    - **Status:** always `provisional` for new proposals
-4. **Generate the document** at `enhancements/<domain>/<slug>/README.md` using the template from [guidelines/enhancement_template.md](guidelines/enhancement_template.md). Fill every section from the user's input — do not leave TBD/TODO. If input doesn't cover a section, infer and mark with `<!-- REVIEW: inferred, please verify -->`.
-5. **Completeness check** — verify all sections present, YAML frontmatter valid, no unintentional placeholders, directory name matches `title` field. Report the file path and any sections marked for review.
+4. **Generate the document** at `enhancements/<domain>/<slug>/README.md` using the template from [guidelines/enhancement_template.md](guidelines/enhancement_template.md). Before creating, check if the directory or file already exists — if so, stop and ask the user whether to update it or pick a different slug. Fill every section from the user's input — do not leave TBD/TODO. If input doesn't cover a section, infer and mark with `<!-- REVIEW: inferred, please verify -->`.
+5. **Completeness check** — verify all sections present, YAML frontmatter valid, no unintentional placeholders (note: `TBD` in `reviewers` and `approvers` frontmatter is expected), directory name matches `title` field. Report the file path and any sections marked for review.
 
 ### Conventions
 
