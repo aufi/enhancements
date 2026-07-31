@@ -184,7 +184,7 @@ New flags on `crane transfer-pvc`:
 
 | Flag | Type | Required | Description |
 |------|------|----------|-------------|
-| `--cloud-storage` | string | No | S3-compatible target (e.g. `s3:bucket/path`). Activates indirect mode |
+| `--cloud-storage` | string | No | S3-compatible target (e.g. `s3:bucket/path`). Activates indirect mode. **Warning:** uses `rclone sync` which overwrites existing data at the target path |
 | `--rclone-config-secret` | string | Yes* | K8s Secret containing rclone.conf (must exist in both clusters) |
 | `--rclone-config-file` | string | Yes* | Path to rclone.conf on disk (crane creates temporary Secrets) |
 | `--encrypt` | bool | No | Enable client-side encryption via rclone crypt overlay |
@@ -198,6 +198,11 @@ when `--cloud-storage` is set.
 - `--cloud-storage` without rclone config → error
 - Both `--rclone-config-secret` and `--rclone-config-file` at once → error
 - Referenced Secret does not exist in cluster → error before creating mover Pod
+
+**Known limitation:** The same rclone config is used in both clusters.
+Asymmetric credential setups (e.g. IAM roles on source, static keys on
+destination) are not supported in the first iteration and may be added
+later with per-cluster config flags.
 
 #### rsync-transfer Image Changes
 
@@ -279,7 +284,10 @@ kubectl create secret generic s3-credentials \
 
 **Local config file (development):** Crane CLI reads the file from disk,
 creates temporary Secrets in both clusters, and removes them after transfer
-completion as part of garbage collection.
+completion as part of garbage collection. Temporary Secrets are created
+with crane-specific labels (e.g. `app.kubernetes.io/managed-by: crane`)
+so they can be identified and cleaned up on subsequent runs if a previous
+transfer crashed mid-flight.
 
 #### Encryption (optional)
 
@@ -349,6 +357,7 @@ Encryption is opt-in. Without this flag, data transfers unencrypted.
 - Run indirect transfer via MinIO
 - Verify destination PVC contents match source
 - Test with `--encrypt` flag
+- Test symlink handling: relative symlinks, absolute symlinks, symlink loops
 - Test error cases: missing Secret, unreachable cloud storage, partial
   transfer recovery
 
@@ -357,6 +366,12 @@ Encryption is opt-in. Without this flag, data transfers unencrypted.
 - Two kind clusters with a shared MinIO instance
 - Complete indirect transfer flow: source PVC → MinIO → destination PVC
 - Verify data integrity (checksums)
+- Verify filesystem metadata round-trip fidelity: create files with specific
+  ownership (UID/GID), permissions, and symlinks on the source PVC, transfer
+  through S3, and verify they are preserved on the destination. If metadata
+  round-trip proves unreliable, fallback to `tar | rclone rcat` (archiving
+  PVC contents into a single object that preserves POSIX metadata natively)
+  will be evaluated. Document any limitations found.
 - Verify backward compatibility: direct rsync/stunnel transfer still works
   with the updated image
 
